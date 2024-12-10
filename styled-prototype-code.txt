@@ -1,0 +1,548 @@
+------
+app.py
+------
+
+from flask import Flask, render_template, request, redirect, url_for, session, flash
+import secrets
+from flask_sqlalchemy import SQLAlchemy
+
+app = Flask(__name__)
+app.secret_key = secrets.token_hex(16)
+
+# Configure session cookie settings
+app.config.update(
+    SESSION_COOKIE_SECURE=True,  # Set to True to include the Secure attribute
+    SESSION_COOKIE_SAMESITE='None'  # Set to 'None' for SameSite=None
+)
+
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///english_learning_app.db'
+db = SQLAlchemy(app)
+
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    password = db.Column(db.String(80), nullable=False)
+    language_level = db.Column(db.String(10))  # beginning, intermediate, advanced
+
+class Show(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), unique=True, nullable=False)
+
+class Clip(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    show_id = db.Column(db.Integer, db.ForeignKey('show.id'), nullable=False)
+    language_level = db.Column(db.String(10))  # beginning, intermediate, advanced
+
+    show = db.relationship('Show', backref=db.backref('clips', lazy=True))
+
+@app.route('/')
+def home():
+    return render_template('index.html')
+
+@app.route('/signup', methods=['GET', 'POST'])
+def signup():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']  # Consider hashing the password
+        language_level = request.form['language_level']
+
+        # Check if user already exists
+        existing_user = User.query.filter_by(username=username).first()
+        if existing_user:
+            flash('Username already exists. Choose a different one.', 'danger')
+            return redirect(url_for('signup'))
+
+        new_user = User(username=username, password=password, language_level=language_level)
+        db.session.add(new_user)
+        db.session.commit()
+
+        return redirect(url_for('home'))
+    return render_template('signup.html')
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']  # In a real app, this should be a hashed password
+
+        # Query the database for the user
+        user = User.query.filter_by(username=username).first()
+
+        if user and user.password == password:
+            # User exists and password matches
+            session['username'] = username
+            flash(f'Welcome back, {username}!', 'success')
+            return redirect(url_for('home'))
+        else:
+            # User doesn't exist or password doesn't match
+            flash('Invalid username or password. Please try again.', 'danger')
+
+    return render_template('login.html')
+
+
+@app.route('/logout')
+def logout():
+    # Clear the session data
+    session.pop('username', None)
+    return redirect(url_for('home'))
+  
+@app.route('/profile', methods=['GET', 'POST'])
+def profile():
+    if 'username' not in session:
+        flash('You need to log in to view this page', 'danger')
+        return redirect(url_for('login'))
+
+    username = session['username']
+    user = User.query.filter_by(username=username).first()
+
+    if request.method == 'POST':
+        language_level = request.form['language_level']
+        user.language_level = language_level
+        db.session.commit()
+        flash('Language level updated successfully!', 'success')
+        return redirect(url_for('home'))
+
+    return render_template('profile.html', user=user)
+
+@app.route('/admin', methods=['GET', 'POST'])
+def admin():
+    if 'username' not in session or session['username'] != 'admin':
+        flash('You need to be an admin to view this page', 'danger')
+        return redirect(url_for('login'))
+
+    if request.method == 'POST':
+        if 'show_name' in request.form:
+            # Adding a new show
+            show_name = request.form['show_name']
+            new_show = Show(name=show_name)
+            db.session.add(new_show)
+            db.session.commit()
+            flash('New show added successfully!', 'success')
+        elif 'clip_name' in request.form:
+            # Adding a new clip
+            clip_name = request.form['clip_name']
+            show_id = request.form['show_id']
+            language_level = request.form['language_level']
+            new_clip = Clip(name=clip_name, show_id=show_id, language_level=language_level)
+            db.session.add(new_clip)
+            db.session.commit()
+            flash('New clip added successfully!', 'success')
+
+    shows = Show.query.all()
+    clips = Clip.query.all()
+    return render_template('admin.html', shows=shows, clips=clips)
+
+@app.route('/search')
+def search():
+    if 'username' not in session:
+        flash('You need to log in to view this page', 'danger')
+        return redirect(url_for('login'))
+
+    username = session['username']
+    user = User.query.filter_by(username=username).first()
+
+    if user:
+        language_level = user.language_level
+        matching_clips = Clip.query.filter_by(language_level=language_level).all()
+        return render_template('search.html', clips=matching_clips)
+    else:
+        flash('User not found', 'danger')
+        return redirect(url_for('home'))
+
+
+
+
+if __name__ == '__main__':
+    with app.app_context():
+        db.create_all()
+    app.run(host='0.0.0.0', port=8080, debug=True)
+
+----------------
+static/script.js
+----------------
+
+// script.js
+function checkPassword() {
+    var passwordInput = document.getElementById('password');
+    var submitBtn = document.getElementById('submit-btn');
+    submitBtn.disabled = passwordInput.value.length < 8;
+}
+
+-----------------
+static/styles.css
+-----------------
+
+/* styles.css */
+body {
+    background-color: #121212; /* Dark background */
+    color: #ffffff; /* Light text */
+}
+.navbar {
+    background-color: #343a40; /* Dark navbar */
+}
+.btn-primary {
+    background-color: #007bff;
+    border-color: #007bff;
+}
+.btn-secondary {
+    background-color: #6c757d;
+    border-color: #6c757d;
+}
+a, a:hover {
+    color: #0d6efd; /* Light blue link color */
+}
+
+--------------------
+templates/admin.html
+--------------------
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Admin Page</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Custom CSS for Dark Mode -->
+    <link href="{{ url_for('static', filename='styles.css') }}" rel="stylesheet">
+</head>
+<body>
+    <div class="container mt-4">
+        <h2 class="text-white">Admin Page</h2>
+
+        <div class="card bg-dark text-white mb-3">
+            <div class="card-header">Add New Show</div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('admin') }}">
+                    <div class="form-group">
+                        <label for="show_name">Show Name:</label>
+                        <input type="text" class="form-control" id="show_name" name="show_name" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Add Show</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="card bg-dark text-white mb-3">
+            <div class="card-header">Add New Clip</div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('admin') }}">
+                    <div class="form-group">
+                        <label for="clip_name">Clip Name:</label>
+                        <input type="text" class="form-control" id="clip_name" name="clip_name" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="show_id">Show:</label>
+                        <select class="form-control" name="show_id" id="show_id" required>
+                            {% for show in shows %}
+                            <option value="{{ show.id }}">{{ show.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="language_level">Language Level:</label>
+                        <select class="form-control" name="language_level" id="language_level" required>
+                            <option value="beginning">Beginning</option>
+                            <option value="intermediate">Intermediate</option>
+                            <option value="advanced">Advanced</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Add Clip</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- List of Shows and Clips -->
+        <h3 class="text-white">Shows</h3>
+        <ul class="list-group">
+        {% for show in shows %}
+            <li class="list-group-item bg-dark text-white">{{ show.name }}</li>
+        {% endfor %}
+        </ul>
+
+        <h3 class="text-white mt-3">Clips</h3>
+        <ul class="list-group">
+        {% for clip in clips %}
+            <li class="list-group-item bg-dark text-white">{{ clip.name }} (Show: {{ clip.show.name }}, Language Level: {{ clip.language_level }})</li>
+        {% endfor %}
+        </ul>
+
+        <p><a href="{{ url_for('home') }}" class="btn btn-secondary mt-3">Back to Home</a></p>
+    </div>
+
+    <!-- Bootstrap JS and dependencies (Optional, for interactive components) -->
+    <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js"></script>
+</body>
+</html>
+
+--------------------
+templates/index.html
+--------------------
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>English Learning App</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" rel="stylesheet">
+<!-- Custom CSS -->
+    <link href="{{ url_for('static', filename='styles.css') }}" rel="stylesheet">
+</head>
+<body>
+    <!-- Navigation Bar -->
+    <nav class="navbar navbar-expand-lg navbar-dark">
+        <a class="navbar-brand" href="{{ url_for('home') }}">English Learning App</a>
+        <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navbarNav">
+            <ul class="navbar-nav ml-auto">
+                {% if 'username' in session %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('logout') }}">Logout</a>
+                    </li>
+                {% else %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('signup') }}">Sign Up</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('login') }}">Log In</a>
+                    </li>
+                {% endif %}
+            </ul>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <h1>Welcome to the English Learning App</h1>
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            <div class="alert alert-info">
+              {% for category, message in messages %}
+                <p>{{ message }}</p>
+              {% endfor %}
+            </div>
+          {% endif %}
+        {% endwith %}
+
+        <div class="content">
+            {% if 'username' in session %}
+                <p>Hello, {{ session['username'] }}!</p>
+                <p>Explore TV shows and movies to improve your English skills.</p>
+                <p><a href="{{ url_for('search') }}" class="btn btn-primary">Find Clips</a></p>
+                <p><a href="{{ url_for('profile') }}" class="btn btn-secondary">Edit Profile</a></p>
+                {% if session['username'] == 'admin' %}
+                    <p><a href="{{ url_for('admin') }}" class="btn btn-danger">Admin Page</a></p>
+                {% endif %}
+            {% else %}
+                <p>Explore TV shows and movies to improve your English skills.</p>
+                <p><a href="{{ url_for('signup') }}" class="btn btn-primary">Sign Up</a> or <a href="{{ url_for('login') }}" class="btn btn-secondary">Log In</a></p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Bootstrap JS and dependencies (Optional, for interactive components) -->
+    <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js"></script>
+</body>
+</html>
+
+--------------------
+templates/login.html
+--------------------
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Log In</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Custom CSS for Dark Mode -->
+    <link href="{{ url_for('static', filename='styles.css') }}" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <h2 class="text-center text-white mt-4">Log In</h2>
+
+        <div class="row justify-content-center">
+            <div class="col-md-6">
+                {% with messages = get_flashed_messages() %}
+                  {% if messages %}
+                      <div class="alert alert-danger">
+                          {% for message in messages %}
+                              <p class="mb-0">{{ message }}</p>
+                          {% endfor %}
+                      </div>
+                  {% endif %}
+                {% endwith %}
+
+                <form method="POST" action="{{ url_for('login') }}" class="mt-4">
+                    <div class="form-group">
+                        <label for="username" class="text-white">Username:</label>
+                        <input type="text" class="form-control" id="username" name="username" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="password" class="text-white">Password:</label>
+                        <input type="password" class="form-control" id="password" name="password" required>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary w-100">Log In</button>
+                </form>
+
+                <p class="text-center text-white mt-3">Don't have an account? <a href="{{ url_for('signup') }}" class="text-primary">Sign Up</a></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS and dependencies (Optional, for interactive components) -->
+    <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js"></script>
+</body>
+</html>
+
+----------------------
+templates/profile.html
+----------------------
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Profile</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Custom CSS for Dark Mode -->
+    <link href="{{ url_for('static', filename='styles.css') }}" rel="stylesheet">
+</head>
+<body>
+    <div class="container mt-4">
+        <h2 class="text-white">Edit Profile</h2>
+        <form method="POST" action="{{ url_for('profile') }}" class="bg-dark text-white p-3 rounded">
+            <div class="form-group">
+                <label for="language_level">Language Level:</label>
+                <select name="language_level" id="language_level" class="form-control" required>
+                    <option value="beginning" {% if user.language_level == 'beginning' %}selected{% endif %}>Beginning</option>
+                    <option value="intermediate" {% if user.language_level == 'intermediate' %}selected{% endif %}>Intermediate</option>
+                    <option value="advanced" {% if user.language_level == 'advanced' %}selected{% endif %}>Advanced</option>
+                </select>
+            </div>
+            <button type="submit" class="btn btn-primary">Update</button>
+        </form>
+        <p><a href="{{ url_for('home') }}" class="btn btn-secondary mt-3">Back to Home</a></p>
+    </div>
+
+    <!-- Bootstrap JS and dependencies (Optional, for interactive components) -->
+    <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js"></script>
+</body>
+</html>
+
+---------------------
+templates/search.html
+---------------------
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Search Clips</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Custom CSS for Dark Mode -->
+    <link href="{{ url_for('static', filename='styles.css') }}" rel="stylesheet">
+</head>
+<body>
+    <div class="container mt-4">
+        <h2 class="text-white">Clips Matching Your Language Level</h2>
+
+        <!-- Clips List -->
+        <div class="list-group">
+            {% for clip in clips %}
+                <a href="#" class="list-group-item list-group-item-action bg-dark text-white">
+                    {{ clip.name }} (Show: {{ clip.show.name }})
+                </a>
+            {% endfor %}
+        </div>
+
+        <p><a href="{{ url_for('home') }}" class="btn btn-secondary mt-3">Back to Home</a></p>
+    </div>
+
+    <!-- Bootstrap JS and dependencies (Optional, for interactive components) -->
+    <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js"></script>
+</body>
+</html>
+
+---------------------
+templates/signup.html
+---------------------
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign Up</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Custom CSS for Dark Mode -->
+    <link href="{{ url_for('static', filename='styles.css') }}" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <h2 class="text-center text-white mt-4">Sign Up</h2>
+
+        <div class="row justify-content-center">
+            <div class="col-md-6">
+                <form method="POST" action="{{ url_for('signup') }}" class="mt-4">
+                    <div class="form-group">
+                        <label for="username" class="text-white">Username:</label>
+                        <input type="text" class="form-control" id="username" name="username" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="password" class="text-white">Password:</label>
+                        <input type="password" class="form-control" id="password" name="password" required oninput="checkPassword()">
+                        <small class="form-text text-muted">Password must be at least 8 characters long.</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="language_level" class="text-white">Language Level:</label>
+                        <select name="language_level" id="language_level" class="form-control" required>
+                            <option value="beginning">Beginning</option>
+                            <option value="intermediate">Intermediate</option>
+                            <option value="advanced">Advanced</option>
+                        </select>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary w-100" id="submit-btn" disabled>Sign Up</button>
+                </form>
+
+                <p class="text-center text-white mt-3">Already have an account? <a href="{{ url_for('login') }}" class="text-primary">Log In</a></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- External JavaScript File -->
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+
+    <!-- Bootstrap JS and dependencies (Optional, for interactive components) -->
+    <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js"></script>
+</body>
+</html>
+
